@@ -10,7 +10,6 @@ struct Uniforms {
     thickness: f32,
     distance_falloff: f32,
     scale: f32,
-    normal_mode: f32,
     denoise_rings: f32,
     denoise_radius_exponent: f32,
     ao_width: f32,
@@ -20,7 +19,9 @@ struct Uniforms {
     denoise_normal_phi: f32,
     denoise_radius: f32,
     // Pad the struct to a multiple of 16 bytes for uniform buffer layout.
-    _padding: vec2f,
+    _padding_0: f32,
+    _padding_1: f32,
+    _padding_2: f32,
 };
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
@@ -50,6 +51,9 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
 
 const PI: f32 = 3.141592653589793;
 const SAMPLES: i32 = 16;
+
+// Specialized at pipeline creation: 0 = depth, 1 = plain, 2 = octahedral.
+override NORMAL_MODE: i32 = 0;
 
 fn clamp_coord(p: vec2i, size: vec2u) -> vec2i {
     return min(max(p, vec2i(0, 0)), vec2i(size) - vec2i(1, 1));
@@ -132,17 +136,17 @@ fn decode_octahedral(p_in: vec2f) -> vec3f {
 }
 
 fn get_view_normal(uv: vec2f) -> vec3f {
-    let mode = i32(u.normal_mode);
-    if (mode == 1 || mode == 2) {
-        let size = textureDimensions(t_normal);
-        let p = clamp_coord(vec2i(uv * vec2f(size)), size);
-        let texel = textureLoad(t_normal, p, 0);
-        if (mode == 1) {
-            return safe_normalize(texel.xyz);
-        }
-        return decode_octahedral(texel.xy);
+    if (NORMAL_MODE == 0) {
+        return compute_normal_from_depth(uv);
     }
-    return compute_normal_from_depth(uv);
+
+    let size = textureDimensions(t_normal);
+    let p = clamp_coord(vec2i(uv * vec2f(size)), size);
+    let texel = textureLoad(t_normal, p, 0);
+    if (NORMAL_MODE == 1) {
+        return safe_normalize(texel.xyz);
+    }
+    return decode_octahedral(texel.xy);
 }
 
 fn hash_u32(value_in: u32) -> u32 {

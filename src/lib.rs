@@ -211,7 +211,6 @@ struct GpuUniforms {
     thickness: f32,
     distance_falloff: f32,
     scale: f32,
-    normal_mode: f32,
     denoise_rings: f32,
     denoise_radius_exponent: f32,
     ao_width: f32,
@@ -221,7 +220,7 @@ struct GpuUniforms {
     denoise_normal_phi: f32,
     denoise_radius: f32,
     /// Pad the struct to a multiple of 16 bytes for uniform buffer layout.
-    _padding: [f32; 2],
+    _padding: [f32; 3],
 }
 
 /// A GTAO renderer.
@@ -267,7 +266,6 @@ impl GtaoRenderer {
                 GtaoUniforms::default(),
                 descriptor.params,
                 descriptor.denoise.unwrap_or_default(),
-                normal_mode,
                 ao_size,
             )),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
@@ -283,8 +281,12 @@ impl GtaoRenderer {
                 ],
             });
 
-        let gtao_pipeline =
-            create_gtao_pipeline(device, &gtao_bind_group_layout, descriptor.ao_format);
+        let gtao_pipeline = create_gtao_pipeline(
+            device,
+            &gtao_bind_group_layout,
+            descriptor.ao_format,
+            normal_mode,
+        );
 
         let denoise_bind_group_layout = descriptor.denoise.map(|_| {
             let sample_type = ao_sample_type(descriptor.ao_format);
@@ -309,9 +311,9 @@ impl GtaoRenderer {
             })
         });
 
-        let denoise_pipeline = denoise_bind_group_layout
-            .as_ref()
-            .map(|layout| create_denoise_pipeline(device, layout, descriptor.ao_format));
+        let denoise_pipeline = denoise_bind_group_layout.as_ref().map(|layout| {
+            create_denoise_pipeline(device, layout, descriptor.ao_format, normal_mode)
+        });
 
         let ao_raw_view = create_ao_texture(device, ao_size, descriptor.ao_format, "gtao raw ao");
         let ao_final_view = descriptor
@@ -383,7 +385,6 @@ impl GtaoRenderer {
             self.uniforms,
             self.params,
             self.denoise_params.unwrap_or_default(),
-            normal_mode(self.normal_encoding),
             self.ao_size,
         );
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
@@ -520,7 +521,6 @@ impl GpuUniforms {
         uniforms: GtaoUniforms,
         params: GtaoParams,
         denoise: DenoiseParams,
-        normal_mode: f32,
         ao_size: (u32, u32),
     ) -> Self {
         Self {
@@ -531,7 +531,6 @@ impl GpuUniforms {
             thickness: params.thickness,
             distance_falloff: params.distance_falloff,
             scale: params.scale,
-            normal_mode,
             denoise_rings: denoise.rings,
             denoise_radius_exponent: denoise.radius_exponent,
             ao_width: ao_size.0 as f32,
@@ -540,16 +539,16 @@ impl GpuUniforms {
             denoise_depth_phi: denoise.depth_phi,
             denoise_normal_phi: denoise.normal_phi,
             denoise_radius: denoise.radius,
-            _padding: [0.0; 2],
+            _padding: [0.0; 3],
         }
     }
 }
 
-fn normal_mode(encoding: Option<NormalEncoding>) -> f32 {
+fn normal_mode(encoding: Option<NormalEncoding>) -> i32 {
     match encoding {
-        None => 0.0,
-        Some(NormalEncoding::Plain) => 1.0,
-        Some(NormalEncoding::OctahedralSigned) => 2.0,
+        None => 0,
+        Some(NormalEncoding::Plain) => 1,
+        Some(NormalEncoding::OctahedralSigned) => 2,
     }
 }
 
@@ -669,6 +668,7 @@ fn create_gtao_pipeline(
     device: &wgpu::Device,
     bind_group_layout: &wgpu::BindGroupLayout,
     ao_format: wgpu::TextureFormat,
+    normal_mode: i32,
 ) -> wgpu::RenderPipeline {
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("gtao shader"),
@@ -680,6 +680,8 @@ fn create_gtao_pipeline(
         bind_group_layouts: &[Some(bind_group_layout)],
         immediate_size: 0,
     });
+
+    let constants = [("NORMAL_MODE", normal_mode as f64)];
 
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("gtao pipeline"),
@@ -696,7 +698,10 @@ fn create_gtao_pipeline(
         fragment: Some(wgpu::FragmentState {
             module: &shader,
             entry_point: Some("fs_main"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            compilation_options: wgpu::PipelineCompilationOptions {
+                constants: &constants,
+                ..Default::default()
+            },
             targets: &[Some(wgpu::ColorTargetState {
                 format: ao_format,
                 blend: None,
@@ -712,6 +717,7 @@ fn create_denoise_pipeline(
     device: &wgpu::Device,
     bind_group_layout: &wgpu::BindGroupLayout,
     ao_format: wgpu::TextureFormat,
+    normal_mode: i32,
 ) -> wgpu::RenderPipeline {
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("gtao poisson denoise shader"),
@@ -723,6 +729,8 @@ fn create_denoise_pipeline(
         bind_group_layouts: &[Some(bind_group_layout)],
         immediate_size: 0,
     });
+
+    let constants = [("NORMAL_MODE", normal_mode as f64)];
 
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("gtao denoise pipeline"),
@@ -739,7 +747,10 @@ fn create_denoise_pipeline(
         fragment: Some(wgpu::FragmentState {
             module: &shader,
             entry_point: Some("fs_main"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            compilation_options: wgpu::PipelineCompilationOptions {
+                constants: &constants,
+                ..Default::default()
+            },
             targets: &[Some(wgpu::ColorTargetState {
                 format: ao_format,
                 blend: None,
@@ -848,5 +859,11 @@ mod tests {
     fn resolution_scale_never_returns_zero() {
         assert_eq!(scale_resolution(0, 10, 0.5), (1, 5));
         assert_eq!(scale_resolution(1920, 1080, 0.5), (960, 540));
+    }
+
+    #[test]
+    fn gpu_uniforms_layout_is_16_byte_aligned() {
+        assert_eq!(std::mem::size_of::<GpuUniforms>(), 192);
+        assert_eq!(std::mem::align_of::<GpuUniforms>(), 16);
     }
 }
