@@ -4,7 +4,15 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NormalSpace {
     /// Normal is in camera local space (view space).
+    ///
+    /// This is the cheapest option, because the GTAO and denoise passes work
+    /// in view space and can use the decoded normal directly.
     CameraLocalSpace,
+    /// Normal is in world space.
+    ///
+    /// The renderer transforms the normal into view space using
+    /// [`crate::GtaoUniforms::camera_view_rotation`] in the shader.
+    WorldSpace,
 }
 
 /// How a normal texture encodes its normals.
@@ -43,15 +51,78 @@ pub enum NormalEncoding {
 
 /// The normal texture and its conventions.
 pub struct NormalInput<'a> {
+    /// The normal texture view.
     pub view: &'a wgpu::TextureView,
+    /// How the texture encodes its normals.
     pub encoding: NormalEncoding,
+    /// The space the normals are stored in.
     pub space: NormalSpace,
 }
 
-pub(crate) fn normal_mode(encoding: Option<NormalEncoding>) -> i32 {
-    match encoding {
-        None => 0,
-        Some(NormalEncoding::Plain) => 1,
-        Some(NormalEncoding::OctahedralSigned) => 2,
+/// Pipeline-time normal settings derived from [`NormalInput`].
+///
+/// Both the encoding and the space are baked into the pipelines as shader
+/// overrides, so they cannot change without recreating the renderer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct NormalConfig {
+    pub(crate) encoding: Option<NormalEncoding>,
+    pub(crate) space: NormalSpace,
+}
+
+impl NormalConfig {
+    pub(crate) fn from_input(input: Option<&NormalInput<'_>>) -> Self {
+        match input {
+            Some(input) => Self {
+                encoding: Some(input.encoding),
+                space: input.space,
+            },
+            None => Self {
+                encoding: None,
+                space: NormalSpace::CameraLocalSpace,
+            },
+        }
+    }
+
+    /// Value of the `NORMAL_MODE` shader override.
+    pub(crate) fn mode(self) -> i32 {
+        match self.encoding {
+            None => 0,
+            Some(NormalEncoding::Plain) => 1,
+            Some(NormalEncoding::OctahedralSigned) => 2,
+        }
+    }
+
+    /// Value of the `NORMAL_SPACE` shader override.
+    pub(crate) fn space_override(self) -> i32 {
+        match self.space {
+            NormalSpace::CameraLocalSpace => 0,
+            NormalSpace::WorldSpace => 1,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normal_config_maps_to_shader_overrides() {
+        let view = NormalConfig {
+            encoding: Some(NormalEncoding::Plain),
+            space: NormalSpace::CameraLocalSpace,
+        };
+        assert_eq!(view.mode(), 1);
+        assert_eq!(view.space_override(), 0);
+
+        let world = NormalConfig {
+            encoding: Some(NormalEncoding::OctahedralSigned),
+            space: NormalSpace::WorldSpace,
+        };
+        assert_eq!(world.mode(), 2);
+        assert_eq!(world.space_override(), 1);
+
+        let depth = NormalConfig::from_input(None);
+        assert_eq!(depth.mode(), 0);
+        assert_eq!(depth.space_override(), 0);
     }
 }

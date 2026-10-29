@@ -2,7 +2,7 @@
 
 use wgpu::util::DeviceExt;
 
-use crate::normal::{NormalEncoding, NormalInput, normal_mode};
+use crate::normal::{NormalConfig, NormalInput};
 use crate::params::{DenoiseParams, GtaoParams};
 use crate::pipeline::{
     create_ao_texture, create_denoise_bind_group, create_denoise_bind_group_layout,
@@ -56,7 +56,7 @@ pub struct GtaoRenderer {
     ao_format: wgpu::TextureFormat,
     ao_size: (u32, u32),
     resolution_scale: f32,
-    normal_encoding: Option<NormalEncoding>,
+    normal_config: NormalConfig,
     denoise_params: Option<DenoiseParams>,
 
     /// Per-frame uniform data. Mutate this before [`GtaoRenderer::render`].
@@ -67,8 +67,7 @@ impl GtaoRenderer {
     pub fn new(device: &wgpu::Device, descriptor: &GtaoDescriptor) -> Self {
         let source_size = texture_size(descriptor.depth_input);
         let ao_size = scale_resolution(source_size.0, source_size.1, descriptor.resolution_scale);
-        let normal_encoding = descriptor.normal_input.as_ref().map(|n| n.encoding);
-        let normal_mode = normal_mode(normal_encoding);
+        let normal_config = NormalConfig::from_input(descriptor.normal_input.as_ref());
 
         let uniforms = GtaoUniforms {
             params: descriptor.params,
@@ -91,7 +90,7 @@ impl GtaoRenderer {
             device,
             &gtao_bind_group_layout,
             descriptor.ao_format,
-            normal_mode,
+            normal_config,
         );
 
         let denoise_bind_group_layout = descriptor
@@ -99,7 +98,7 @@ impl GtaoRenderer {
             .map(|_| create_denoise_bind_group_layout(device, descriptor.ao_format));
 
         let denoise_pipeline = denoise_bind_group_layout.as_ref().map(|layout| {
-            create_denoise_pipeline(device, layout, descriptor.ao_format, normal_mode)
+            create_denoise_pipeline(device, layout, descriptor.ao_format, normal_config)
         });
 
         let ao_raw_view = create_ao_texture(device, ao_size, descriptor.ao_format, "gtao raw ao");
@@ -156,7 +155,7 @@ impl GtaoRenderer {
             ao_format: descriptor.ao_format,
             ao_size,
             resolution_scale: descriptor.resolution_scale,
-            normal_encoding,
+            normal_config,
             denoise_params: descriptor.denoise,
             uniforms,
         }
@@ -251,7 +250,7 @@ impl GtaoRenderer {
         resolution_scale: Option<f32>,
     ) {
         assert_eq!(
-            self.normal_encoding.is_some(),
+            self.normal_config.encoding.is_some(),
             normal_view.is_some(),
             "resize: normal_view must match the normal input mode used at construction; \
              create a new GtaoRenderer to change it",

@@ -1,10 +1,19 @@
 //! Pipeline, bind group, texture and sampler creation.
 
+use crate::normal::NormalConfig;
+
 const GTAO_SHADER: &str = concat!(include_str!("wgsl/common.wgsl"), include_str!("gtao.wgsl"),);
 const DENOISE_SHADER: &str = concat!(
     include_str!("wgsl/common.wgsl"),
     include_str!("poisson_denoise.wgsl"),
 );
+
+fn normal_constants(config: NormalConfig) -> [(&'static str, f64); 2] {
+    [
+        ("NORMAL_MODE", config.mode() as f64),
+        ("NORMAL_SPACE", config.space_override() as f64),
+    ]
+}
 
 fn uniform_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
     wgpu::BindGroupLayoutEntry {
@@ -167,7 +176,7 @@ pub(crate) fn create_gtao_pipeline(
     device: &wgpu::Device,
     bind_group_layout: &wgpu::BindGroupLayout,
     ao_format: wgpu::TextureFormat,
-    normal_mode: i32,
+    normal_config: NormalConfig,
 ) -> wgpu::RenderPipeline {
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("gtao shader"),
@@ -180,7 +189,7 @@ pub(crate) fn create_gtao_pipeline(
         immediate_size: 0,
     });
 
-    let constants = [("NORMAL_MODE", normal_mode as f64)];
+    let constants = normal_constants(normal_config);
 
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("gtao pipeline"),
@@ -216,7 +225,7 @@ pub(crate) fn create_denoise_pipeline(
     device: &wgpu::Device,
     bind_group_layout: &wgpu::BindGroupLayout,
     ao_format: wgpu::TextureFormat,
-    normal_mode: i32,
+    normal_config: NormalConfig,
 ) -> wgpu::RenderPipeline {
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("gtao poisson denoise shader"),
@@ -229,7 +238,7 @@ pub(crate) fn create_denoise_pipeline(
         immediate_size: 0,
     });
 
-    let constants = [("NORMAL_MODE", normal_mode as f64)];
+    let constants = normal_constants(normal_config);
 
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("gtao denoise pipeline"),
@@ -342,5 +351,40 @@ mod tests {
                 .validate(&module)
                 .unwrap_or_else(|error| panic!("invalid WGSL module: {error}"));
         }
+    }
+
+    #[test]
+    fn wgsl_uniform_layout_matches_rust() {
+        let module =
+            wgpu::naga::front::wgsl::parse_str(GTAO_SHADER).expect("GTAO shader should parse");
+
+        let (span, members) = module
+            .types
+            .iter()
+            .find_map(|(_, ty)| {
+                if ty.name.as_deref() == Some("Uniforms")
+                    && let wgpu::naga::TypeInner::Struct { span, members, .. } = &ty.inner
+                {
+                    return Some((*span, members));
+                }
+                None
+            })
+            .expect("Uniforms struct should exist");
+
+        let offset = |name: &str| {
+            members
+                .iter()
+                .find(|member| member.name.as_deref() == Some(name))
+                .unwrap_or_else(|| panic!("missing member {name}"))
+                .offset
+        };
+
+        // Keep in sync with GpuUniforms in src/uniforms.rs.
+        assert_eq!(offset("camera_projection"), 0);
+        assert_eq!(offset("inv_camera_projection"), 64);
+        assert_eq!(offset("camera_view_rotation"), 128);
+        assert_eq!(offset("radius"), 176);
+        assert_eq!(offset("_padding_0"), 228);
+        assert_eq!(span, 240);
     }
 }

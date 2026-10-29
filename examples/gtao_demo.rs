@@ -3,9 +3,12 @@
 // Run with:
 //     cargo run --example gtao_demo
 //
-// It writes two BMP files into the current directory:
-//     gtao_example.bmp  - lit scene with AO applied
-//     gtao_ao.bmp       - the raw AO buffer (white = unoccluded)
+// It renders every supported normal mode and writes two BMP files per mode
+// into target/gtao_modes/:
+//     <mode>_lit.bmp  - lit scene with AO applied
+//     <mode>_ao.bmp   - the final AO buffer (white = unoccluded)
+//
+// Modes: depth, plain_view, plain_world, octa_view, octa_world.
 
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
@@ -16,6 +19,7 @@ use wgpu_gtao::{
 
 const WIDTH: u32 = 1280;
 const HEIGHT: u32 = 720;
+const OUTPUT_DIR: &str = "target/gtao_modes";
 
 type Mat4 = [[f32; 4]; 4];
 
@@ -32,6 +36,67 @@ struct Vertex {
 struct CameraUniform {
     view_projection: Mat4,
     view: Mat4,
+}
+
+/// A normal representation rendered by the demo.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum NormalMode {
+    Depth,
+    PlainView,
+    PlainWorld,
+    OctaView,
+    OctaWorld,
+}
+
+impl NormalMode {
+    const ALL: [NormalMode; 5] = [
+        NormalMode::Depth,
+        NormalMode::PlainView,
+        NormalMode::PlainWorld,
+        NormalMode::OctaView,
+        NormalMode::OctaWorld,
+    ];
+
+    fn name(self) -> &'static str {
+        match self {
+            NormalMode::Depth => "depth",
+            NormalMode::PlainView => "plain_view",
+            NormalMode::PlainWorld => "plain_world",
+            NormalMode::OctaView => "octa_view",
+            NormalMode::OctaWorld => "octa_world",
+        }
+    }
+
+    /// Value of the `NORMAL_OUTPUT` override in gbuffer.wgsl.
+    ///
+    /// The depth mode does not consume the normal texture, so it can reuse the
+    /// plain view-space output.
+    fn gbuffer_override(self) -> i32 {
+        match self {
+            NormalMode::Depth | NormalMode::PlainView => 0,
+            NormalMode::PlainWorld => 1,
+            NormalMode::OctaView => 2,
+            NormalMode::OctaWorld => 3,
+        }
+    }
+
+    fn normal_input<'a>(self, view: &'a wgpu::TextureView) -> Option<NormalInput<'a>> {
+        let (encoding, space) = match self {
+            NormalMode::Depth => return None,
+            NormalMode::PlainView => (NormalEncoding::Plain, NormalSpace::CameraLocalSpace),
+            NormalMode::PlainWorld => (NormalEncoding::Plain, NormalSpace::WorldSpace),
+            NormalMode::OctaView => (
+                NormalEncoding::OctahedralSigned,
+                NormalSpace::CameraLocalSpace,
+            ),
+            NormalMode::OctaWorld => (NormalEncoding::OctahedralSigned, NormalSpace::WorldSpace),
+        };
+        Some(NormalInput {
+            view,
+            encoding,
+            space,
+        })
+    }
 }
 
 fn main() {
@@ -87,22 +152,6 @@ fn main() {
     );
     let ao_debug_view = ao_debug_texture.create_view(&Default::default());
 
-    let mut gtao = GtaoRenderer::new(
-        &device,
-        &GtaoDescriptor {
-            depth_input: &depth_view,
-            normal_input: Some(NormalInput {
-                view: &normal_view,
-                encoding: NormalEncoding::Plain,
-                space: NormalSpace::CameraLocalSpace,
-            }),
-            ao_format: wgpu::TextureFormat::R8Unorm,
-            resolution_scale: 1.0,
-            params: GtaoParams::default(),
-            denoise: Some(DenoiseParams::default()),
-        },
-    );
-
     let view = look_at([7.0, 5.0, 9.0], [0.0, 1.0, 0.0], [0.0, 1.0, 0.0]);
     let projection = perspective(
         60.0f32.to_radians(),
@@ -111,9 +160,8 @@ fn main() {
         100.0,
     );
     let view_projection = mat4_mul(projection, view);
-
-    gtao.uniforms.camera_projection = projection;
-    gtao.uniforms.inv_camera_projection = mat4_inverse(projection);
+    let inv_projection = mat4_inverse(projection);
+    let world_to_view_rotation = view_rotation(view);
 
     let camera_uniform = CameraUniform {
         view_projection,
@@ -164,11 +212,300 @@ fn main() {
         bind_group_layouts: &[Some(&camera_layout)],
         immediate_size: 0,
     });
-    let gbuffer_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    let composite_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("composite shader"),
+        source: wgpu::ShaderSource::Wgsl(include_str!("gtao_demo/composite.wgsl").into()),
+    });
+    let composite_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("composite layout"),
+        entries: &[
+            texture_entry(0, wgpu::TextureSampleType::Float { filterable: true }),
+            texture_entry(1, wgpu::TextureSampleType::Float { filterable: true }),
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+        ],
+    });
+    let composite_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("composite sampler"),
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        ..Default::default()
+    });
+    let composite_pipeline_layout =
+        device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("composite pipeline layout"),
+            bind_group_layouts: &[Some(&composite_layout)],
+            immediate_size: 0,
+        });
+    let composite_pipeline = create_composite_pipeline(
+        &device,
+        &composite_pipeline_layout,
+        &composite_shader,
+        "fs_main",
+    );
+    let ao_pipeline = create_composite_pipeline(
+        &device,
+        &composite_pipeline_layout,
+        &composite_shader,
+        "fs_ao",
+    );
+
+    let padded_bytes_per_row = (WIDTH * 4).div_ceil(256) * 256;
+    let readback_size = (padded_bytes_per_row * HEIGHT) as u64;
+    let final_readback = create_readback_buffer(&device, readback_size, "final readback");
+    let ao_readback = create_readback_buffer(&device, readback_size, "ao readback");
+
+    std::fs::create_dir_all(OUTPUT_DIR).expect("failed to create output directory");
+
+    let mut mode_ao_pixels: Vec<(NormalMode, Vec<u8>)> = Vec::new();
+
+    for mode in NormalMode::ALL {
+        let mut gtao = GtaoRenderer::new(
+            &device,
+            &GtaoDescriptor {
+                depth_input: &depth_view,
+                normal_input: mode.normal_input(&normal_view),
+                ao_format: wgpu::TextureFormat::R8Unorm,
+                resolution_scale: 1.0,
+                params: GtaoParams::default(),
+                denoise: Some(DenoiseParams::default()),
+            },
+        );
+        gtao.uniforms.camera_projection = projection;
+        gtao.uniforms.inv_camera_projection = inv_projection;
+        gtao.uniforms.camera_view_rotation = world_to_view_rotation;
+
+        let composite_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("composite bind group"),
+            layout: &composite_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&color_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(gtao.ao_view()),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&composite_sampler),
+                },
+            ],
+        });
+
+        let gbuffer_pipeline = create_gbuffer_pipeline(
+            &device,
+            &gbuffer_pipeline_layout,
+            &gbuffer_shader,
+            mode.gbuffer_override(),
+        );
+
+        let mut encoder = device.create_command_encoder(&Default::default());
+
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("gbuffer pass"),
+                color_attachments: &[
+                    Some(wgpu::RenderPassColorAttachment {
+                        view: &color_view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color {
+                                r: 0.02,
+                                g: 0.02,
+                                b: 0.03,
+                                a: 1.0,
+                            }),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    }),
+                    Some(wgpu::RenderPassColorAttachment {
+                        view: &normal_view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    }),
+                ],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&gbuffer_pipeline);
+            pass.set_bind_group(0, &camera_bind_group, &[]);
+            pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+            pass.draw(0..vertices.len() as u32, 0..1);
+        }
+
+        gtao.render(&queue, &mut encoder);
+
+        draw_fullscreen(
+            &mut encoder,
+            &composite_pipeline,
+            &composite_bind_group,
+            &final_view,
+        );
+        draw_fullscreen(
+            &mut encoder,
+            &ao_pipeline,
+            &composite_bind_group,
+            &ao_debug_view,
+        );
+
+        copy_texture_to_buffer(
+            &mut encoder,
+            &final_texture,
+            &final_readback,
+            padded_bytes_per_row,
+        );
+        copy_texture_to_buffer(
+            &mut encoder,
+            &ao_debug_texture,
+            &ao_readback,
+            padded_bytes_per_row,
+        );
+
+        queue.submit([encoder.finish()]);
+
+        let final_pixels = read_buffer(&device, &final_readback);
+        let ao_pixels = read_buffer(&device, &ao_readback);
+
+        let lit_path = format!("{OUTPUT_DIR}/{}_lit.bmp", mode.name());
+        let ao_path = format!("{OUTPUT_DIR}/{}_ao.bmp", mode.name());
+        write_bmp(
+            &lit_path,
+            WIDTH,
+            HEIGHT,
+            &final_pixels,
+            padded_bytes_per_row,
+        )
+        .unwrap_or_else(|error| panic!("failed to write {lit_path}: {error}"));
+        write_bmp(&ao_path, WIDTH, HEIGHT, &ao_pixels, padded_bytes_per_row)
+            .unwrap_or_else(|error| panic!("failed to write {ao_path}: {error}"));
+
+        mode_ao_pixels.push((mode, ao_pixels));
+    }
+
+    report_ao_differences(&mode_ao_pixels, padded_bytes_per_row);
+}
+
+/// Statistics of the per-pixel difference between two AO buffers.
+struct AoDiffStats {
+    /// Standard deviation of `other - reference`, in AO units (0..1).
+    std_dev: f32,
+    /// Mean absolute difference, in AO units.
+    mean_abs: f32,
+    /// Largest absolute difference, in AO units.
+    max_abs: f32,
+    /// Percentage of pixels whose 8-bit value differs at all.
+    differing_percent: f32,
+}
+
+fn report_ao_differences(mode_ao_pixels: &[(NormalMode, Vec<u8>)], row_pitch: u32) {
+    let reference = mode_ao_pixels
+        .iter()
+        .find(|(mode, _)| *mode == NormalMode::PlainView)
+        .map(|(_, pixels)| pixels.as_slice())
+        .expect("plain_view mode should have run");
+
+    println!("\nAO difference vs plain_view (view-space reference):");
+    println!(
+        "{:<12} {:>10} {:>10} {:>10} {:>10}",
+        "mode", "std_dev", "mean_abs", "max_abs", "diff_px%"
+    );
+    for (mode, pixels) in mode_ao_pixels {
+        let stats = compare_ao(
+            reference,
+            pixels,
+            WIDTH as usize,
+            HEIGHT as usize,
+            row_pitch as usize,
+        );
+        println!(
+            "{:<12} {:>10.6} {:>10.6} {:>10.6} {:>9.3}%",
+            mode.name(),
+            stats.std_dev,
+            stats.mean_abs,
+            stats.max_abs,
+            stats.differing_percent,
+        );
+    }
+}
+
+fn compare_ao(
+    reference: &[u8],
+    other: &[u8],
+    width: usize,
+    height: usize,
+    row_pitch: usize,
+) -> AoDiffStats {
+    const TO_UNIT: f32 = 1.0 / 255.0;
+
+    let mut sum = 0.0f64;
+    let mut sum_sq = 0.0f64;
+    let mut sum_abs = 0.0f64;
+    let mut max_abs = 0.0f32;
+    let mut differing = 0usize;
+
+    for y in 0..height {
+        let row = y * row_pitch;
+        for x in 0..width {
+            // The AO debug texture is RGBA8 and stores AO in every channel.
+            let index = row + x * 4;
+            let reference_value = reference[index] as f32 * TO_UNIT;
+            let other_value = other[index] as f32 * TO_UNIT;
+            let difference = other_value - reference_value;
+
+            sum += difference as f64;
+            sum_sq += (difference * difference) as f64;
+            sum_abs += difference.abs() as f64;
+            max_abs = max_abs.max(difference.abs());
+            if difference != 0.0 {
+                differing += 1;
+            }
+        }
+    }
+
+    let count = (width * height) as f64;
+    let mean = sum / count;
+    let variance = (sum_sq / count) - mean * mean;
+
+    AoDiffStats {
+        std_dev: variance.max(0.0).sqrt() as f32,
+        mean_abs: (sum_abs / count) as f32,
+        max_abs,
+        differing_percent: differing as f32 / count as f32 * 100.0,
+    }
+}
+
+fn create_gbuffer_pipeline(
+    device: &wgpu::Device,
+    layout: &wgpu::PipelineLayout,
+    shader: &wgpu::ShaderModule,
+    normal_output: i32,
+) -> wgpu::RenderPipeline {
+    let constants = [("NORMAL_OUTPUT", normal_output as f64)];
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("gbuffer pipeline"),
-        layout: Some(&gbuffer_pipeline_layout),
+        layout: Some(layout),
         vertex: wgpu::VertexState {
-            module: &gbuffer_shader,
+            module: shader,
             entry_point: Some("vs_main"),
             compilation_options: Default::default(),
             buffers: &[Some(wgpu::VertexBufferLayout {
@@ -206,9 +543,12 @@ fn main() {
         }),
         multisample: wgpu::MultisampleState::default(),
         fragment: Some(wgpu::FragmentState {
-            module: &gbuffer_shader,
+            module: shader,
             entry_point: Some("fs_main"),
-            compilation_options: Default::default(),
+            compilation_options: wgpu::PipelineCompilationOptions {
+                constants: &constants,
+                ..Default::default()
+            },
             targets: &[
                 Some(wgpu::ColorTargetState {
                     format: wgpu::TextureFormat::Rgba8Unorm,
@@ -224,170 +564,7 @@ fn main() {
         }),
         multiview_mask: None,
         cache: None,
-    });
-
-    let composite_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("composite shader"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("gtao_demo/composite.wgsl").into()),
-    });
-    let composite_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("composite layout"),
-        entries: &[
-            texture_entry(0, wgpu::TextureSampleType::Float { filterable: true }),
-            texture_entry(1, wgpu::TextureSampleType::Float { filterable: true }),
-            wgpu::BindGroupLayoutEntry {
-                binding: 2,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                count: None,
-            },
-        ],
-    });
-    let composite_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-        label: Some("composite sampler"),
-        mag_filter: wgpu::FilterMode::Linear,
-        min_filter: wgpu::FilterMode::Linear,
-        ..Default::default()
-    });
-    let composite_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("composite bind group"),
-        layout: &composite_layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(&color_view),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: wgpu::BindingResource::TextureView(gtao.ao_view()),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: wgpu::BindingResource::Sampler(&composite_sampler),
-            },
-        ],
-    });
-    let composite_pipeline_layout =
-        device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("composite pipeline layout"),
-            bind_group_layouts: &[Some(&composite_layout)],
-            immediate_size: 0,
-        });
-    let composite_pipeline = create_composite_pipeline(
-        &device,
-        &composite_pipeline_layout,
-        &composite_shader,
-        "fs_main",
-    );
-    let ao_pipeline = create_composite_pipeline(
-        &device,
-        &composite_pipeline_layout,
-        &composite_shader,
-        "fs_ao",
-    );
-
-    let mut encoder = device.create_command_encoder(&Default::default());
-
-    {
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("gbuffer pass"),
-            color_attachments: &[
-                Some(wgpu::RenderPassColorAttachment {
-                    view: &color_view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.02,
-                            g: 0.02,
-                            b: 0.03,
-                            a: 1.0,
-                        }),
-                        store: wgpu::StoreOp::Store,
-                    },
-                }),
-                Some(wgpu::RenderPassColorAttachment {
-                    view: &normal_view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                        store: wgpu::StoreOp::Store,
-                    },
-                }),
-            ],
-            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: &depth_view,
-                depth_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(1.0),
-                    store: wgpu::StoreOp::Store,
-                }),
-                stencil_ops: None,
-            }),
-            timestamp_writes: None,
-            occlusion_query_set: None,
-            multiview_mask: None,
-        });
-        pass.set_pipeline(&gbuffer_pipeline);
-        pass.set_bind_group(0, &camera_bind_group, &[]);
-        pass.set_vertex_buffer(0, vertex_buffer.slice(..));
-        pass.draw(0..vertices.len() as u32, 0..1);
-    }
-
-    gtao.render(&queue, &mut encoder);
-
-    draw_fullscreen(
-        &mut encoder,
-        &composite_pipeline,
-        &composite_bind_group,
-        &final_view,
-    );
-    draw_fullscreen(
-        &mut encoder,
-        &ao_pipeline,
-        &composite_bind_group,
-        &ao_debug_view,
-    );
-
-    let padded_bytes_per_row = (WIDTH * 4).div_ceil(256) * 256;
-    let readback_size = (padded_bytes_per_row * HEIGHT) as u64;
-    let final_readback = create_readback_buffer(&device, readback_size, "final readback");
-    let ao_readback = create_readback_buffer(&device, readback_size, "ao readback");
-
-    copy_texture_to_buffer(
-        &mut encoder,
-        &final_texture,
-        &final_readback,
-        padded_bytes_per_row,
-    );
-    copy_texture_to_buffer(
-        &mut encoder,
-        &ao_debug_texture,
-        &ao_readback,
-        padded_bytes_per_row,
-    );
-
-    queue.submit([encoder.finish()]);
-
-    let final_pixels = read_buffer(&device, &final_readback);
-    let ao_pixels = read_buffer(&device, &ao_readback);
-
-    write_bmp(
-        "target/gtao_example.bmp",
-        WIDTH,
-        HEIGHT,
-        &final_pixels,
-        padded_bytes_per_row,
-    )
-    .expect("failed to write gtao_example.bmp");
-    write_bmp(
-        "target/gtao_ao.bmp",
-        WIDTH,
-        HEIGHT,
-        &ao_pixels,
-        padded_bytes_per_row,
-    )
-    .expect("failed to write gtao_ao.bmp");
+    })
 }
 
 fn create_composite_pipeline(
@@ -705,6 +882,15 @@ fn look_at(eye: [f32; 3], center: [f32; 3], up: [f32; 3]) -> Mat4 {
     ]
 }
 
+/// Column-major world-to-view rotation (the upper-left 3x3 block of `view`).
+fn view_rotation(view: Mat4) -> [[f32; 3]; 3] {
+    [
+        [view[0][0], view[0][1], view[0][2]],
+        [view[1][0], view[1][1], view[1][2]],
+        [view[2][0], view[2][1], view[2][2]],
+    ]
+}
+
 fn mat4_mul(a: Mat4, b: Mat4) -> Mat4 {
     let mut out = [[0.0; 4]; 4];
     for c in 0..4 {
@@ -802,6 +988,8 @@ fn block_on<F: std::future::Future>(future: F) -> F::Output {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn demo_shaders_are_valid_wgsl() {
         for source in [
@@ -817,6 +1005,45 @@ mod tests {
             validator
                 .validate(&module)
                 .unwrap_or_else(|error| panic!("invalid WGSL module: {error}"));
+        }
+    }
+
+    #[test]
+    fn ao_diff_stats_match_a_single_differing_pixel() {
+        // 2x2 RGBA8 image, all AO values zero.
+        let reference = [0u8; 16];
+        let mut other = reference;
+        // Make the third pixel fully white (AO = 1).
+        other[8..12].fill(255);
+
+        let stats = compare_ao(&reference, &other, 2, 2, 8);
+        assert_eq!(stats.differing_percent, 25.0);
+        assert!((stats.mean_abs - 0.25).abs() < 1e-6);
+        assert!((stats.max_abs - 1.0).abs() < 1e-6);
+        assert!((stats.std_dev - 0.1875f32.sqrt()).abs() < 1e-6);
+    }
+
+    #[test]
+    fn view_rotation_extracts_the_upper_left_3x3_block() {
+        let view = look_at([7.0, 5.0, 9.0], [0.0, 1.0, 0.0], [0.0, 1.0, 0.0]);
+        let rotation = view_rotation(view);
+
+        // A world-space normal, transformed by the extracted rotation, must
+        // match the full view transform used by the G-buffer shader.
+        let normal = normalize([0.3, 0.8, -0.5]);
+        let transformed = [
+            dot([rotation[0][0], rotation[1][0], rotation[2][0]], normal),
+            dot([rotation[0][1], rotation[1][1], rotation[2][1]], normal),
+            dot([rotation[0][2], rotation[1][2], rotation[2][2]], normal),
+        ];
+        let expected = [
+            view[0][0] * normal[0] + view[1][0] * normal[1] + view[2][0] * normal[2],
+            view[0][1] * normal[0] + view[1][1] * normal[1] + view[2][1] * normal[2],
+            view[0][2] * normal[0] + view[1][2] * normal[1] + view[2][2] * normal[2],
+        ];
+
+        for i in 0..3 {
+            assert!((transformed[i] - expected[i]).abs() < 1e-6);
         }
     }
 }

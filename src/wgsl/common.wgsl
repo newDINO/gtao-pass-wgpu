@@ -5,6 +5,8 @@
 struct Uniforms {
     camera_projection: mat4x4f,
     inv_camera_projection: mat4x4f,
+    // Upper-left 3x3 of the world-to-view matrix, column-major.
+    camera_view_rotation: mat3x3f,
     radius: f32,
     distance_exponent: f32,
     thickness: f32,
@@ -30,6 +32,8 @@ const PI: f32 = 3.141592653589793;
 
 // Specialized at pipeline creation: 0 = depth, 1 = plain, 2 = octahedral.
 override NORMAL_MODE: i32 = 0;
+// Specialized at pipeline creation: 0 = camera local (view) space, 1 = world space.
+override NORMAL_SPACE: i32 = 0;
 
 struct VertexOutput {
     @builtin(position) position: vec4f,
@@ -140,8 +144,15 @@ fn get_view_normal(uv: vec2f) -> vec3f {
     let size = textureDimensions(t_normal);
     let p = clamp_coord(vec2i(uv * vec2f(size)), size);
     let texel = textureLoad(t_normal, p, 0);
+    var n: vec3f;
     if (NORMAL_MODE == 1) {
-        return safe_normalize(texel.xyz);
+        n = safe_normalize(texel.xyz);
+    } else {
+        n = decode_octahedral(texel.xy);
     }
-    return decode_octahedral(texel.xy);
+
+    if (NORMAL_SPACE == 1) {
+        n = u.camera_view_rotation * n;
+    }
+    return safe_normalize(n);
 }

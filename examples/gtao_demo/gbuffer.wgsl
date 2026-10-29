@@ -5,6 +5,10 @@ struct Camera {
 
 @group(0) @binding(0) var<uniform> camera: Camera;
 
+// Specialized per mode by the example:
+// 0 = plain view, 1 = plain world, 2 = octahedral view, 3 = octahedral world.
+override NORMAL_OUTPUT: i32 = 0;
+
 struct VsIn {
     @location(0) position: vec3f,
     @location(1) normal: vec3f,
@@ -28,6 +32,17 @@ fn vs_main(in: VsIn) -> VsOut {
     return out;
 }
 
+fn encode_octahedral(n_in: vec3f) -> vec2f {
+    let n = n_in / (abs(n_in.x) + abs(n_in.y) + abs(n_in.z));
+    var p = n.xy;
+
+    if (n.z < 0.0) {
+        p = (1.0 - abs(p.yx)) * select(vec2f(-1.0), vec2f(1.0), p >= vec2f(0.0));
+    }
+
+    return p;
+}
+
 struct FsOut {
     @location(0) color: vec4f,
     @location(1) normal: vec4f,
@@ -35,13 +50,24 @@ struct FsOut {
 
 @fragment
 fn fs_main(in: VsOut) -> FsOut {
-    let normal = normalize(in.world_normal);
+    let world_normal = normalize(in.world_normal);
     let light_dir = normalize(vec3f(0.45, 0.8, 0.35));
-    let diffuse = max(dot(normal, light_dir), 0.0);
+    let diffuse = max(dot(world_normal, light_dir), 0.0);
     let light = 0.22 + 0.78 * diffuse;
+
+    var n: vec3f;
+    if (NORMAL_OUTPUT == 1 || NORMAL_OUTPUT == 3) {
+        n = world_normal;
+    } else {
+        n = normalize(in.view_normal);
+    }
 
     var out: FsOut;
     out.color = vec4f(in.color * light, 1.0);
-    out.normal = vec4f(normalize(in.view_normal), 1.0);
+    if (NORMAL_OUTPUT >= 2) {
+        out.normal = vec4f(encode_octahedral(n), 0.0, 1.0);
+    } else {
+        out.normal = vec4f(n, 1.0);
+    }
     return out;
 }
