@@ -451,8 +451,12 @@ impl GtaoRenderer {
     /// Recreate [`wgpu::BindGroup`] from resized depth and normal texture view.
     /// Recreate ao texture from new input size and resolution scale.
     ///
-    /// Passing `None` for `normal_view` switches to depth-reconstructed
-    /// normals. Passing `None` for `resolution_scale` keeps the current scale.
+    /// `normal_view` must match the normal input mode used at construction:
+    /// pass `Some` if the renderer was created with a normal input, and `None`
+    /// if it reconstructs normals from depth. Changing the mode requires
+    /// creating a new [`GtaoRenderer`].
+    ///
+    /// Passing `None` for `resolution_scale` keeps the current scale.
     pub fn resize(
         &mut self,
         device: &wgpu::Device,
@@ -460,6 +464,13 @@ impl GtaoRenderer {
         normal_view: Option<&wgpu::TextureView>,
         resolution_scale: Option<f32>,
     ) {
+        assert_eq!(
+            self.normal_encoding.is_some(),
+            normal_view.is_some(),
+            "resize: normal_view must match the normal input mode used at construction; \
+             create a new GtaoRenderer to change it",
+        );
+
         let source_size = texture_size(depth_view);
         let scale = resolution_scale.unwrap_or(self.resolution_scale);
         let ao_size = scale_resolution(source_size.0, source_size.1, scale);
@@ -469,9 +480,6 @@ impl GtaoRenderer {
             .denoise_params
             .is_some()
             .then(|| create_ao_texture(device, ao_size, self.ao_format, "gtao denoised ao"));
-
-        self.normal_encoding =
-            normal_view.map(|_| self.normal_encoding.unwrap_or(NormalEncoding::Plain));
 
         let dummy_normal = normal_view.is_none().then(|| create_dummy_normal(device));
         let normal_view = normal_view
