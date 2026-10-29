@@ -116,22 +116,19 @@ pub(crate) fn create_sampler(
     device: &wgpu::Device,
     ao_format: wgpu::TextureFormat,
 ) -> wgpu::Sampler {
-    let filterable = is_filterable(ao_sample_type(ao_format));
+    let filter = if is_filterable(ao_sample_type(ao_format)) {
+        wgpu::FilterMode::Linear
+    } else {
+        wgpu::FilterMode::Nearest
+    };
+
     device.create_sampler(&wgpu::SamplerDescriptor {
         label: Some("gtao denoise sampler"),
         address_mode_u: wgpu::AddressMode::ClampToEdge,
         address_mode_v: wgpu::AddressMode::ClampToEdge,
         address_mode_w: wgpu::AddressMode::ClampToEdge,
-        mag_filter: if filterable {
-            wgpu::FilterMode::Linear
-        } else {
-            wgpu::FilterMode::Nearest
-        },
-        min_filter: if filterable {
-            wgpu::FilterMode::Linear
-        } else {
-            wgpu::FilterMode::Nearest
-        },
+        mag_filter: filter,
+        min_filter: filter,
         ..Default::default()
     })
 }

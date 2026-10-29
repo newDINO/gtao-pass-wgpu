@@ -63,6 +63,34 @@ pub struct GtaoRenderer {
     pub uniforms: GtaoUniforms,
 }
 
+fn draw_fullscreen(
+    encoder: &mut wgpu::CommandEncoder,
+    label: &str,
+    target: &wgpu::TextureView,
+    pipeline: &wgpu::RenderPipeline,
+    bind_group: &wgpu::BindGroup,
+) {
+    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some(label),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            view: target,
+            depth_slice: None,
+            resolve_target: None,
+            ops: wgpu::Operations {
+                load: wgpu::LoadOp::Clear(wgpu::Color::WHITE),
+                store: wgpu::StoreOp::Store,
+            },
+        })],
+        depth_stencil_attachment: None,
+        timestamp_writes: None,
+        occlusion_query_set: None,
+        multiview_mask: None,
+    });
+    pass.set_pipeline(pipeline);
+    pass.set_bind_group(0, bind_group, &[]);
+    pass.draw(0..3, 0..1);
+}
+
 impl GtaoRenderer {
     pub fn new(device: &wgpu::Device, descriptor: &GtaoDescriptor) -> Self {
         let source_size = texture_size(descriptor.depth_input);
@@ -173,52 +201,26 @@ impl GtaoRenderer {
         );
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
-        {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("gtao pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &self.ao_raw_view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::WHITE),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
-            pass.set_pipeline(&self.gtao_pipeline);
-            pass.set_bind_group(0, &self.gtao_bind_group, &[]);
-            pass.draw(0..3, 0..1);
-        }
+        draw_fullscreen(
+            encoder,
+            "gtao pass",
+            &self.ao_raw_view,
+            &self.gtao_pipeline,
+            &self.gtao_bind_group,
+        );
 
         if let (Some(pipeline), Some(bind_group), Some(final_view)) = (
             &self.denoise_pipeline,
             &self.denoise_bind_group,
             &self.ao_final_view,
         ) {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("gtao denoise pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: final_view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::WHITE),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
-            pass.set_pipeline(pipeline);
-            pass.set_bind_group(0, bind_group, &[]);
-            pass.draw(0..3, 0..1);
+            draw_fullscreen(
+                encoder,
+                "gtao denoise pass",
+                final_view,
+                pipeline,
+                bind_group,
+            );
         }
     }
 

@@ -61,6 +61,7 @@ fn fs_main(in: VertexOutput) -> @location(0) f32 {
     let tangent = normalize(random_vec);
     let bitangent = vec3f(-tangent.y, tangent.x, 0.0);
     let kernel_matrix = mat3x3f(tangent, bitangent, vec3f(0.0, 0.0, 1.0));
+    let view_dir = normalize(-view_pos);
 
     var ao = 0.0;
     for (var i: i32 = 0; i < DIRECTIONS; i++) {
@@ -69,7 +70,6 @@ fn fs_main(in: VertexOutput) -> @location(0) f32 {
             kernel_matrix * vec3f(cos(direction_angle), sin(direction_angle), 0.0),
         );
 
-        let view_dir = normalize(-view_pos);
         let slice_bitangent_raw = cross(sample_dir, view_dir);
         let slice_bitangent_len = length(slice_bitangent_raw);
         if (slice_bitangent_len < 1e-6) {

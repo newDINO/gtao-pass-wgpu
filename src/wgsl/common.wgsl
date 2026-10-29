@@ -72,9 +72,8 @@ fn fetch_depth(p: vec2i) -> f32 {
 }
 
 fn get_depth(uv: vec2f) -> f32 {
-    let size = textureDimensions(t_depth);
-    let p = vec2i(uv * vec2f(size));
-    return textureLoad(t_depth, clamp_coord(p, size), 0).r;
+    let size = vec2f(textureDimensions(t_depth));
+    return fetch_depth(vec2i(uv * size));
 }
 
 fn get_view_position(uv: vec2f, depth: f32) -> vec3f {
