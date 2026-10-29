@@ -1,10 +1,11 @@
 //! Ground truth ambient occlusion (GTAO) for [`wgpu`].
 //!
 //! This is a fairly direct WGSL port of the GTAO implementation in three.js
-//! (`GTAOShader` + `PoissonDenoiseShader`). The renderer expects a depth
-//! texture and, optionally, a view-space normal texture. Both are sampled at
-//! the current output resolution, so the AO buffer can be rendered at a lower
-//! resolution than the scene.
+//! (`GTAOShader` + `PoissonDenoiseShader`). three.js is MIT licensed; see the
+//! `LICENSE-THREEJS` file for the original copyright and license notice. The
+//! renderer expects a depth texture and, optionally, a view-space normal
+//! texture. Both are sampled at the current output resolution, so the AO buffer
+//! can be rendered at a lower resolution than the scene.
 //!
 //! # Coordinate conventions
 //!

@@ -1,4 +1,6 @@
 // GTAO fragment shader. Ported from three.js' GTAOShader.
+// Original: examples/jsm/shaders/GTAOShader.js
+// three.js is MIT licensed; see LICENSE-THREEJS.
 
 struct Uniforms {
     camera_projection: mat4x4f,

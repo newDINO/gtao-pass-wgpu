@@ -58,6 +58,13 @@ cargo run --example gtao_demo
 The example needs a working wgpu adapter (Vulkan/Metal/DX12/GL). It does not
 need a window or display server.
 
+## License
+
+The GTAO and Poisson denoise shaders are ported from
+[three.js](https://github.com/mrdoob/three.js), which is MIT licensed.
+See [`LICENSE-THREEJS`](LICENSE-THREEJS) for the original copyright and
+license notice.
+
 ## Limitations
 
 - Perspective camera only.
