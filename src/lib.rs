@@ -167,7 +167,8 @@ pub struct GtaoDescriptor<'a> {
     /// The size of the output ao texture view determined by the size of the input depth texture,
     /// processed by [`scale_resolution`] function.
     pub resolution_scale: f32,
-    /// Parameters of the GTAO pass.
+    /// Initial parameters of the GTAO pass. Mutate [`GtaoUniforms::params`] to
+    /// change them per frame.
     pub params: GtaoParams,
     /// Parameters of the Poisson denoise pass. Use [`None`] to skip denoising;
     /// in that case [`GtaoRenderer::ao_view`] returns the raw AO.
@@ -183,6 +184,8 @@ pub struct GtaoUniforms {
     pub camera_projection: [[f32; 4]; 4],
     /// The inverse projection matrix: clip space to camera local space.
     pub inv_camera_projection: [[f32; 4]; 4],
+    /// Parameters of the GTAO pass, mutable per frame.
+    pub params: GtaoParams,
 }
 
 impl Default for GtaoUniforms {
@@ -190,6 +193,7 @@ impl Default for GtaoUniforms {
         Self {
             camera_projection: IDENTITY,
             inv_camera_projection: IDENTITY,
+            params: GtaoParams::default(),
         }
     }
 }
@@ -246,7 +250,6 @@ pub struct GtaoRenderer {
     ao_size: (u32, u32),
     resolution_scale: f32,
     normal_encoding: Option<NormalEncoding>,
-    params: GtaoParams,
     denoise_params: Option<DenoiseParams>,
 
     /// Per-frame uniform data. Mutate this before [`GtaoRenderer::render`].
@@ -260,11 +263,15 @@ impl GtaoRenderer {
         let normal_encoding = descriptor.normal_input.as_ref().map(|n| n.encoding);
         let normal_mode = normal_mode(normal_encoding);
 
+        let uniforms = GtaoUniforms {
+            params: descriptor.params,
+            ..Default::default()
+        };
+
         let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("gtao uniforms"),
             contents: bytemuck::bytes_of(&GpuUniforms::new(
-                GtaoUniforms::default(),
-                descriptor.params,
+                uniforms,
                 descriptor.denoise.unwrap_or_default(),
                 ao_size,
             )),
@@ -370,9 +377,8 @@ impl GtaoRenderer {
             ao_size,
             resolution_scale: descriptor.resolution_scale,
             normal_encoding,
-            params: descriptor.params,
             denoise_params: descriptor.denoise,
-            uniforms: GtaoUniforms::default(),
+            uniforms,
         }
     }
 
@@ -383,7 +389,6 @@ impl GtaoRenderer {
     pub fn render(&self, queue: &wgpu::Queue, encoder: &mut wgpu::CommandEncoder) {
         let uniforms = GpuUniforms::new(
             self.uniforms,
-            self.params,
             self.denoise_params.unwrap_or_default(),
             self.ao_size,
         );
@@ -517,12 +522,8 @@ impl GtaoRenderer {
 }
 
 impl GpuUniforms {
-    fn new(
-        uniforms: GtaoUniforms,
-        params: GtaoParams,
-        denoise: DenoiseParams,
-        ao_size: (u32, u32),
-    ) -> Self {
+    fn new(uniforms: GtaoUniforms, denoise: DenoiseParams, ao_size: (u32, u32)) -> Self {
+        let params = uniforms.params;
         Self {
             camera_projection: uniforms.camera_projection,
             inv_camera_projection: uniforms.inv_camera_projection,
