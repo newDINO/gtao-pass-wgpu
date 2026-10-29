@@ -234,6 +234,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "gtao-pass-wgpu"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "wgpu",
+]
+
+[[package]]
 name = "half"
 version = "2.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -980,14 +988,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7586165fd5f6d881cb9ce4bb71f40d6caab2c0f1837e3fc1d9788a197fb6004f"
 dependencies = [
  "wgpu-hal",
-]
-
-[[package]]
-name = "wgpu-gtao"
-version = "0.1.0"
-dependencies = [
- "bytemuck",
- "wgpu",
 ]
 
 [[package]]

@@ -1,5 +1,5 @@
 [package]
-name = "wgpu-gtao"
+name = "gtao-pass-wgpu"
 version = "0.1.0"
 edition = "2024"
 

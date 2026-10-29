@@ -11,11 +11,11 @@
 // Modes: depth, plain_view, plain_world, octa_view, octa_world.
 
 use bytemuck::{Pod, Zeroable};
-use wgpu::util::DeviceExt;
-use wgpu_gtao::{
+use gtao_pass_wgpu::{
     DenoiseParams, GtaoDescriptor, GtaoParams, GtaoRenderer, NormalEncoding, NormalInput,
     NormalSpace,
 };
+use wgpu::util::DeviceExt;
 
 const WIDTH: u32 = 1280;
 const HEIGHT: u32 = 720;
