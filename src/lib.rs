@@ -218,12 +218,12 @@ struct GtaoUniforms {
     denoise_radius_exponent: f32,
     ao_width: f32,
     ao_height: f32,
-    source_width: f32,
-    source_height: f32,
     denoise_luma_phi: f32,
     denoise_depth_phi: f32,
     denoise_normal_phi: f32,
     denoise_radius: f32,
+    /// Pad the struct to a multiple of 16 bytes for uniform buffer layout.
+    _padding: [f32; 2],
 }
 
 /// A GTAO renderer.
@@ -247,7 +247,6 @@ pub struct GtaoRenderer {
     sampler: wgpu::Sampler,
     ao_format: wgpu::TextureFormat,
     ao_size: (u32, u32),
-    source_size: (u32, u32),
     resolution_scale: f32,
     normal_encoding: Option<NormalEncoding>,
     params: GtaoParams,
@@ -269,7 +268,6 @@ impl GtaoRenderer {
                 descriptor.denoise.unwrap_or_default(),
                 normal_mode,
                 ao_size,
-                source_size,
             )),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
@@ -367,7 +365,6 @@ impl GtaoRenderer {
             sampler,
             ao_format: descriptor.ao_format,
             ao_size,
-            source_size,
             resolution_scale: descriptor.resolution_scale,
             normal_encoding,
             params: descriptor.params,
@@ -383,7 +380,6 @@ impl GtaoRenderer {
             self.denoise_params.unwrap_or_default(),
             normal_mode(self.normal_encoding),
             self.ao_size,
-            self.source_size,
         );
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
     }
@@ -503,7 +499,6 @@ impl GtaoRenderer {
             )
         });
 
-        self.source_size = source_size;
         self.resolution_scale = scale;
         self.ao_size = ao_size;
         self.gtao_bind_group = gtao_bind_group;
@@ -520,7 +515,6 @@ impl GtaoUniforms {
         denoise: DenoiseParams,
         normal_mode: f32,
         ao_size: (u32, u32),
-        source_size: (u32, u32),
     ) -> Self {
         Self {
             camera_projection: uniform_data.camera_projection,
@@ -535,12 +529,11 @@ impl GtaoUniforms {
             denoise_radius_exponent: denoise.radius_exponent,
             ao_width: ao_size.0 as f32,
             ao_height: ao_size.1 as f32,
-            source_width: source_size.0 as f32,
-            source_height: source_size.1 as f32,
             denoise_luma_phi: denoise.luma_phi,
             denoise_depth_phi: denoise.depth_phi,
             denoise_normal_phi: denoise.normal_phi,
             denoise_radius: denoise.radius,
+            _padding: [0.0; 2],
         }
     }
 }

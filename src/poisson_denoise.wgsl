@@ -13,12 +13,12 @@ struct Uniforms {
     denoise_radius_exponent: f32,
     ao_width: f32,
     ao_height: f32,
-    source_width: f32,
-    source_height: f32,
     denoise_luma_phi: f32,
     denoise_depth_phi: f32,
     denoise_normal_phi: f32,
     denoise_radius: f32,
+    // Pad the struct to a multiple of 16 bytes for uniform buffer layout.
+    _padding: vec2f,
 };
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
