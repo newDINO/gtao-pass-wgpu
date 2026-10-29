@@ -119,13 +119,13 @@ impl GpuUniforms {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pipeline::GTAO_SHADER;
 
     #[test]
-    fn gpu_uniforms_layout_matches_the_shaders() {
+    fn gpu_mat3_matches_wgsl_layout() {
+        // WGSL pads every mat3x3f column to 16 bytes.
         assert_eq!(std::mem::size_of::<GpuMat3>(), 48);
         assert_eq!(std::mem::align_of::<GpuMat3>(), 16);
-        assert_eq!(std::mem::size_of::<GpuUniforms>(), 240);
-        assert_eq!(std::mem::align_of::<GpuUniforms>(), 16);
     }
 
     #[test]
@@ -138,6 +138,62 @@ mod tests {
                 [4.0, 5.0, 6.0, 0.0],
                 [7.0, 8.0, 9.0, 0.0],
             ]
+        );
+    }
+
+    #[test]
+    fn wgsl_uniform_layout_matches_rust() {
+        let module =
+            wgpu::naga::front::wgsl::parse_str(GTAO_SHADER).expect("GTAO shader should parse");
+
+        let (span, members) = module
+            .types
+            .iter()
+            .find_map(|(_, ty)| {
+                if ty.name.as_deref() == Some("Uniforms")
+                    && let wgpu::naga::TypeInner::Struct { span, members, .. } = &ty.inner
+                {
+                    return Some((*span, members));
+                }
+                None
+            })
+            .expect("Uniforms struct should exist");
+
+        let offset = |name: &str| {
+            members
+                .iter()
+                .find(|member| member.name.as_deref() == Some(name))
+                .unwrap_or_else(|| panic!("missing member {name}"))
+                .offset as usize
+        };
+
+        // Check the layout boundaries that matter: the matrix block, the
+        // mat3x3f padding, the padding tail and the total size. If a field is
+        // added on only one side, the size or padding offset will diverge.
+        assert_eq!(
+            offset("camera_projection"),
+            std::mem::offset_of!(GpuUniforms, camera_projection),
+        );
+        assert_eq!(
+            offset("inv_camera_projection"),
+            std::mem::offset_of!(GpuUniforms, inv_camera_projection),
+        );
+        assert_eq!(
+            offset("camera_view_rotation"),
+            std::mem::offset_of!(GpuUniforms, camera_view_rotation),
+        );
+        assert_eq!(offset("radius"), std::mem::offset_of!(GpuUniforms, radius),);
+
+        // The Rust struct groups the three padding scalars into one array.
+        let padding = std::mem::offset_of!(GpuUniforms, _padding);
+        assert_eq!(offset("_padding_0"), padding);
+        assert_eq!(offset("_padding_1"), padding + 4);
+        assert_eq!(offset("_padding_2"), padding + 8);
+
+        assert_eq!(
+            span as usize,
+            std::mem::size_of::<GpuUniforms>(),
+            "WGSL struct size must match the Rust upload type",
         );
     }
 }
