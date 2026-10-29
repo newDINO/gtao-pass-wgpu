@@ -1,4 +1,4 @@
-# wgpu-gtao
+# gtao-pass-wgpu
 
 Ground truth ambient occlusion (GTAO) for [`wgpu`], ported from three.js'
 `GTAOShader` and `PoissonDenoiseShader`.
@@ -11,9 +11,17 @@ Ground truth ambient occlusion (GTAO) for [`wgpu`], ported from three.js'
 - Lower-resolution AO via `resolution_scale`.
 - Single-channel AO output (`R8Unorm`, `R16Float`, `R32Float`, ...).
 
+## Installation
+
+```sh
+cargo add gtao-pass-wgpu
+```
+
 ## Usage
 
 ```rust
+use gtao_pass_wgpu::*;
+
 let mut gtao = GtaoRenderer::new(
     &device,
     &GtaoDescriptor {

@@ -2,6 +2,12 @@
 name = "gtao-pass-wgpu"
 version = "0.1.0"
 edition = "2024"
+description = "Ground truth ambient occlusion (GTAO) render pass for wgpu"
+license = "MIT"
+repository = "https://github.com/newDINO/gtao-pass-wgpu"
+readme = "README.md"
+keywords = ["gtao", "ambient-occlusion", "wgpu", "webgpu", "rendering"]
+categories = ["graphics", "rendering", "game-development"]
 
 [dependencies]
 wgpu = "30"

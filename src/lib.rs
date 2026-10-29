@@ -25,7 +25,7 @@
 //! # Example
 //!
 //! ```no_run
-//! # use wgpu_gtao::*;
+//! # use gtao_pass_wgpu::*;
 //! # fn example(device: &wgpu::Device, queue: &wgpu::Queue, depth: &wgpu::TextureView) {
 //! let projection = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]];
 //! let projection_inverse = projection;
