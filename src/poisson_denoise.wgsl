@@ -3,14 +3,22 @@
 struct Uniforms {
     camera_projection: mat4x4f,
     inv_camera_projection: mat4x4f,
-    // radius, distance_exponent, thickness, distance_falloff
-    params: vec4f,
-    // scale, normal_mode, denoise_rings, denoise_radius_exponent
-    params2: vec4f,
-    // ao width, ao height, source width, source height
-    resolution: vec4f,
-    // denoise luma_phi, depth_phi, normal_phi, radius
-    denoise: vec4f,
+    radius: f32,
+    distance_exponent: f32,
+    thickness: f32,
+    distance_falloff: f32,
+    scale: f32,
+    normal_mode: f32,
+    denoise_rings: f32,
+    denoise_radius_exponent: f32,
+    ao_width: f32,
+    ao_height: f32,
+    source_width: f32,
+    source_height: f32,
+    denoise_luma_phi: f32,
+    denoise_depth_phi: f32,
+    denoise_normal_phi: f32,
+    denoise_radius: f32,
 };
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
@@ -122,7 +130,7 @@ fn decode_octahedral(p_in: vec2f) -> vec3f {
 }
 
 fn get_view_normal(uv: vec2f) -> vec3f {
-    let mode = i32(u.params2.y);
+    let mode = i32(u.normal_mode);
     if (mode == 1 || mode == 2) {
         let size = textureDimensions(t_normal);
         let p = clamp_coord(vec2i(uv * vec2f(size)), size);
@@ -163,11 +171,11 @@ fn denoise_sample(
     let sample_view_pos = get_view_position(sample_uv, sample_depth);
 
     let normal_diff = dot(view_normal, sample_normal);
-    let normal_similarity = pow(max(normal_diff, 0.0), u.denoise.z);
+    let normal_similarity = pow(max(normal_diff, 0.0), u.denoise_normal_phi);
     let luma_diff = abs(neighbor - center);
-    let luma_similarity = max(1.0 - luma_diff / u.denoise.x, 0.0);
+    let luma_similarity = max(1.0 - luma_diff / u.denoise_luma_phi, 0.0);
     let depth_diff = abs(dot(view_pos - sample_view_pos, view_normal));
-    let depth_similarity = max(1.0 - depth_diff / u.denoise.y, 0.0);
+    let depth_similarity = max(1.0 - depth_diff / u.denoise_depth_phi, 0.0);
     let w = luma_similarity * depth_similarity * normal_similarity;
 
     return vec2f(neighbor * w, w);
@@ -186,21 +194,22 @@ fn fs_main(in: VertexOutput) -> @location(0) f32 {
     let center = texel.r;
     let view_pos = get_view_position(uv, depth);
 
-    let pixel = vec2u(uv * u.resolution.xy);
+    let ao_size = vec2f(u.ao_width, u.ao_height);
+    let pixel = vec2u(uv * ao_size);
     let rotation_angle = rand01(pixel) * 2.0 * PI;
     let noise_vec = vec2f(sin(rotation_angle), cos(rotation_angle));
     let rotation_matrix = mat2x2f(noise_vec.x, -noise_vec.y, noise_vec.x, noise_vec.y);
 
-    let radius = u.denoise.w;
+    let radius = u.denoise_radius;
     var total_weight = 1.0;
     var denoised = center;
 
     for (var i: i32 = 0; i < SAMPLES; i++) {
-        let angle = 2.0 * PI * u.params2.z * f32(i) / f32(SAMPLES);
-        let sample_radius = pow(f32(i) / f32(SAMPLES - 1), u.params2.w);
+        let angle = 2.0 * PI * u.denoise_rings * f32(i) / f32(SAMPLES);
+        let sample_radius = pow(f32(i) / f32(SAMPLES - 1), u.denoise_radius_exponent);
         let sample_dir = vec3f(cos(angle), sin(angle), sample_radius);
         let offset = rotation_matrix
-            * (sample_dir.xy * (1.0 + sample_dir.z * (radius - 1.0)) / u.resolution.xy);
+            * (sample_dir.xy * (1.0 + sample_dir.z * (radius - 1.0)) / ao_size);
         let sample_uv = uv + offset;
         let contribution = denoise_sample(center, view_normal, view_pos, sample_uv);
         denoised += contribution.x;

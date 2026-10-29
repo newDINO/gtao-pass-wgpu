@@ -3,14 +3,22 @@
 struct Uniforms {
     camera_projection: mat4x4f,
     inv_camera_projection: mat4x4f,
-    // radius, distance_exponent, thickness, distance_falloff
-    params: vec4f,
-    // scale, normal_mode, denoise_rings, denoise_radius_exponent
-    params2: vec4f,
-    // ao width, ao height, source width, source height
-    resolution: vec4f,
-    // denoise luma_phi, depth_phi, normal_phi, radius
-    denoise: vec4f,
+    radius: f32,
+    distance_exponent: f32,
+    thickness: f32,
+    distance_falloff: f32,
+    scale: f32,
+    normal_mode: f32,
+    denoise_rings: f32,
+    denoise_radius_exponent: f32,
+    ao_width: f32,
+    ao_height: f32,
+    source_width: f32,
+    source_height: f32,
+    denoise_luma_phi: f32,
+    denoise_depth_phi: f32,
+    denoise_normal_phi: f32,
+    denoise_radius: f32,
 };
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
@@ -133,7 +141,7 @@ fn decode_octahedral(p_in: vec2f) -> vec3f {
 }
 
 fn get_view_normal(uv: vec2f) -> vec3f {
-    let mode = i32(u.params2.y);
+    let mode = i32(u.normal_mode);
     if (mode == 1 || mode == 2) {
         let size = textureDimensions(t_normal);
         let p = clamp_coord(vec2i(uv * vec2f(size)), size);
@@ -173,12 +181,12 @@ fn fs_main(in: VertexOutput) -> @location(0) f32 {
 
     let view_pos = get_view_position(uv, depth);
     let view_normal = get_view_normal(uv);
-    let radius = u.params.x;
-    let distance_exponent = u.params.y;
-    let thickness = u.params.z;
-    let distance_falloff = u.params.w;
+    let radius = u.radius;
+    let distance_exponent = u.distance_exponent;
+    let thickness = u.thickness;
+    let distance_falloff = u.distance_falloff;
 
-    let pixel = vec2u(uv * u.resolution.xy);
+    let pixel = vec2u(uv * vec2f(u.ao_width, u.ao_height));
     let angle = magic_square_angle(pixel);
     let random_vec = vec3f(cos(angle), sin(angle), 0.0);
     let tangent = normalize(random_vec);
@@ -247,6 +255,6 @@ fn fs_main(in: VertexOutput) -> @location(0) f32 {
     }
 
     ao = clamp(ao / f32(DIRECTIONS), 0.0, 1.0);
-    ao = pow(ao, u.params2.x);
+    ao = pow(ao, u.scale);
     return ao;
 }

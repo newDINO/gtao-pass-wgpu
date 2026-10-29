@@ -208,14 +208,22 @@ const IDENTITY: [[f32; 4]; 4] = [
 struct GtaoUniforms {
     camera_projection: [[f32; 4]; 4],
     inv_camera_projection: [[f32; 4]; 4],
-    /// radius, distance_exponent, thickness, distance_falloff
-    params: [f32; 4],
-    /// scale, normal_mode, denoise_rings, denoise_radius_exponent
-    params2: [f32; 4],
-    /// ao width, ao height, source width, source height
-    resolution: [f32; 4],
-    /// denoise luma_phi, depth_phi, normal_phi, radius
-    denoise: [f32; 4],
+    radius: f32,
+    distance_exponent: f32,
+    thickness: f32,
+    distance_falloff: f32,
+    scale: f32,
+    normal_mode: f32,
+    denoise_rings: f32,
+    denoise_radius_exponent: f32,
+    ao_width: f32,
+    ao_height: f32,
+    source_width: f32,
+    source_height: f32,
+    denoise_luma_phi: f32,
+    denoise_depth_phi: f32,
+    denoise_normal_phi: f32,
+    denoise_radius: f32,
 }
 
 /// A GTAO renderer.
@@ -517,30 +525,22 @@ impl GtaoUniforms {
         Self {
             camera_projection: uniform_data.camera_projection,
             inv_camera_projection: uniform_data.inv_camera_projection,
-            params: [
-                params.radius,
-                params.distance_exponent,
-                params.thickness,
-                params.distance_falloff,
-            ],
-            params2: [
-                params.scale,
-                normal_mode,
-                denoise.rings,
-                denoise.radius_exponent,
-            ],
-            resolution: [
-                ao_size.0 as f32,
-                ao_size.1 as f32,
-                source_size.0 as f32,
-                source_size.1 as f32,
-            ],
-            denoise: [
-                denoise.luma_phi,
-                denoise.depth_phi,
-                denoise.normal_phi,
-                denoise.radius,
-            ],
+            radius: params.radius,
+            distance_exponent: params.distance_exponent,
+            thickness: params.thickness,
+            distance_falloff: params.distance_falloff,
+            scale: params.scale,
+            normal_mode,
+            denoise_rings: denoise.rings,
+            denoise_radius_exponent: denoise.radius_exponent,
+            ao_width: ao_size.0 as f32,
+            ao_height: ao_size.1 as f32,
+            source_width: source_size.0 as f32,
+            source_height: source_size.1 as f32,
+            denoise_luma_phi: denoise.luma_phi,
+            denoise_depth_phi: denoise.depth_phi,
+            denoise_normal_phi: denoise.normal_phi,
+            denoise_radius: denoise.radius,
         }
     }
 }
