@@ -1,0 +1,8 @@
+[package]
+name = "wgpu-gtao"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+wgpu = "30"
+bytemuck = "1"
