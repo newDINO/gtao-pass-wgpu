@@ -11,7 +11,7 @@ use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 use wgpu_gtao::{
     DenoiseParams, GtaoDescriptor, GtaoParams, GtaoRenderer, NormalEncoding, NormalInput,
-    NormalSpace, UniformData,
+    NormalSpace,
 };
 
 const WIDTH: u32 = 1280;
@@ -86,7 +86,7 @@ fn main() {
     );
     let ao_debug_view = ao_debug_texture.create_view(&Default::default());
 
-    let gtao = GtaoRenderer::new(
+    let mut gtao = GtaoRenderer::new(
         &device,
         &GtaoDescriptor {
             depth_input: &depth_view,
@@ -111,13 +111,8 @@ fn main() {
     );
     let view_projection = mat4_mul(projection, view);
 
-    gtao.update(
-        &queue,
-        UniformData {
-            camera_projection: projection,
-            inv_camera_projection: mat4_inverse(projection),
-        },
-    );
+    gtao.uniforms.camera_projection = projection;
+    gtao.uniforms.inv_camera_projection = mat4_inverse(projection);
 
     let camera_uniform = CameraUniform {
         view_projection,
@@ -338,7 +333,7 @@ fn main() {
         pass.draw(0..vertices.len() as u32, 0..1);
     }
 
-    gtao.render(&mut encoder);
+    gtao.render(&queue, &mut encoder);
 
     draw_fullscreen(
         &mut encoder,

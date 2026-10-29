@@ -33,16 +33,11 @@
 //!     },
 //! );
 //!
-//! gtao.update(
-//!     queue,
-//!     UniformData {
-//!         camera_projection: projection,
-//!         inv_camera_projection: projection_inverse,
-//!     },
-//! );
+//! gtao.uniforms.camera_projection = projection;
+//! gtao.uniforms.inv_camera_projection = projection_inverse;
 //!
 //! let mut encoder = device.create_command_encoder(&Default::default());
-//! gtao.render(&mut encoder);
+//! gtao.render(queue, &mut encoder);
 //! queue.submit([encoder.finish()]);
 //! # }
 //! ```
@@ -178,16 +173,18 @@ pub struct GtaoDescriptor<'a> {
     pub denoise: Option<DenoiseParams>,
 }
 
-/// Per-frame camera data.
+/// Per-frame uniform data supplied by the caller.
+///
+/// The renderer stores this in [`GtaoRenderer::uniforms`].
 #[derive(Clone, Copy, Debug)]
-pub struct UniformData {
+pub struct GtaoUniforms {
     /// The projection matrix: camera local space to clip space.
     pub camera_projection: [[f32; 4]; 4],
     /// The inverse projection matrix: clip space to camera local space.
     pub inv_camera_projection: [[f32; 4]; 4],
 }
 
-impl Default for UniformData {
+impl Default for GtaoUniforms {
     fn default() -> Self {
         Self {
             camera_projection: IDENTITY,
@@ -205,7 +202,7 @@ const IDENTITY: [[f32; 4]; 4] = [
 
 #[repr(C, align(16))]
 #[derive(Clone, Copy, Pod, Zeroable)]
-struct GtaoUniforms {
+struct GpuUniforms {
     camera_projection: [[f32; 4]; 4],
     inv_camera_projection: [[f32; 4]; 4],
     radius: f32,
@@ -251,6 +248,9 @@ pub struct GtaoRenderer {
     normal_encoding: Option<NormalEncoding>,
     params: GtaoParams,
     denoise_params: Option<DenoiseParams>,
+
+    /// Per-frame uniform data. Mutate this before [`GtaoRenderer::render`].
+    pub uniforms: GtaoUniforms,
 }
 
 impl GtaoRenderer {
@@ -262,8 +262,8 @@ impl GtaoRenderer {
 
         let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("gtao uniforms"),
-            contents: bytemuck::bytes_of(&GtaoUniforms::new(
-                UniformData::default(),
+            contents: bytemuck::bytes_of(&GpuUniforms::new(
+                GtaoUniforms::default(),
                 descriptor.params,
                 descriptor.denoise.unwrap_or_default(),
                 normal_mode,
@@ -369,26 +369,24 @@ impl GtaoRenderer {
             normal_encoding,
             params: descriptor.params,
             denoise_params: descriptor.denoise,
+            uniforms: GtaoUniforms::default(),
         }
     }
 
-    /// Update uniform data before calling [`GtaoRenderer::render`].
-    pub fn update(&self, queue: &wgpu::Queue, uniform_data: UniformData) {
-        let uniforms = GtaoUniforms::new(
-            uniform_data,
+    /// Record the GTAO (and optional denoise) pass into `encoder`.
+    ///
+    /// Uploads [`GtaoRenderer::uniforms`] and the current output resolution
+    /// before recording the passes.
+    pub fn render(&self, queue: &wgpu::Queue, encoder: &mut wgpu::CommandEncoder) {
+        let uniforms = GpuUniforms::new(
+            self.uniforms,
             self.params,
             self.denoise_params.unwrap_or_default(),
             normal_mode(self.normal_encoding),
             self.ao_size,
         );
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
-    }
 
-    /// Record the GTAO (and optional denoise) pass into `encoder`.
-    ///
-    /// Call [`GtaoRenderer::update`] first so that the camera matrices and the
-    /// output resolution are up to date.
-    pub fn render(&self, encoder: &mut wgpu::CommandEncoder) {
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("gtao pass"),
@@ -508,17 +506,17 @@ impl GtaoRenderer {
     }
 }
 
-impl GtaoUniforms {
+impl GpuUniforms {
     fn new(
-        uniform_data: UniformData,
+        uniforms: GtaoUniforms,
         params: GtaoParams,
         denoise: DenoiseParams,
         normal_mode: f32,
         ao_size: (u32, u32),
     ) -> Self {
         Self {
-            camera_projection: uniform_data.camera_projection,
-            inv_camera_projection: uniform_data.inv_camera_projection,
+            camera_projection: uniforms.camera_projection,
+            inv_camera_projection: uniforms.inv_camera_projection,
             radius: params.radius,
             distance_exponent: params.distance_exponent,
             thickness: params.thickness,

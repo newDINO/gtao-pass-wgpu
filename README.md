@@ -26,17 +26,12 @@ let mut gtao = GtaoRenderer::new(
     },
 );
 
-gtao.update(
-    &queue,
-    UniformData {
-        camera_projection,
-        inv_camera_projection,
-    },
-);
+gtao.uniforms.camera_projection = camera_projection;
+gtao.uniforms.inv_camera_projection = inv_camera_projection;
 
 let mut encoder = device.create_command_encoder(&Default::default());
 // ... render your scene's depth (and optional normal) buffer first ...
-gtao.render(&mut encoder);
+gtao.render(&queue, &mut encoder);
 // Sample gtao.ao_view() in your lighting/composite pass.
 ```
 
