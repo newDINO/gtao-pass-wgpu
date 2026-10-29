@@ -276,7 +276,7 @@ impl GtaoRenderer {
                 label: Some("gtao bind group layout"),
                 entries: &[
                     uniform_entry(0),
-                    texture_entry(1, wgpu::TextureSampleType::Depth),
+                    depth_texture_entry(1),
                     texture_entry(2, wgpu::TextureSampleType::Float { filterable: false }),
                 ],
             });
@@ -295,7 +295,7 @@ impl GtaoRenderer {
                 entries: &[
                     uniform_entry(0),
                     texture_entry(1, sample_type),
-                    texture_entry(2, wgpu::TextureSampleType::Depth),
+                    depth_texture_entry(2),
                     texture_entry(3, wgpu::TextureSampleType::Float { filterable: false }),
                     wgpu::BindGroupLayoutEntry {
                         binding: 4,
@@ -581,6 +581,16 @@ fn texture_entry(binding: u32, sample_type: wgpu::TextureSampleType) -> wgpu::Bi
         },
         count: None,
     }
+}
+
+fn depth_texture_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+    // Depth textures are bound as unfilterable float textures instead of using
+    // `TextureSampleType::Depth`, because `textureLoad` on depth textures is
+    // not supported by the GLSL backend.
+    texture_entry(
+        binding,
+        wgpu::TextureSampleType::Float { filterable: false },
+    )
 }
 
 fn is_filterable(sample_type: wgpu::TextureSampleType) -> bool {

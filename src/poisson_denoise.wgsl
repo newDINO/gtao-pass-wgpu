@@ -26,7 +26,9 @@ struct Uniforms {
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
 @group(0) @binding(1) var t_ao: texture_2d<f32>;
-@group(0) @binding(2) var t_depth: texture_depth_2d;
+// Depth is bound as an unfilterable float texture rather than
+// texture_depth_2d so that textureLoad works on the GL backend.
+@group(0) @binding(2) var t_depth: texture_2d<f32>;
 @group(0) @binding(3) var t_normal: texture_2d<f32>;
 @group(0) @binding(4) var s_ao: sampler;
 
@@ -68,13 +70,13 @@ fn safe_normalize(v: vec3f) -> vec3f {
 }
 
 fn fetch_depth(p: vec2i) -> f32 {
-    return textureLoad(t_depth, clamp_coord(p, textureDimensions(t_depth)), 0);
+    return textureLoad(t_depth, clamp_coord(p, textureDimensions(t_depth)), 0).r;
 }
 
 fn get_depth(uv: vec2f) -> f32 {
     let size = textureDimensions(t_depth);
     let p = vec2i(uv * vec2f(size));
-    return textureLoad(t_depth, clamp_coord(p, size), 0);
+    return textureLoad(t_depth, clamp_coord(p, size), 0).r;
 }
 
 fn get_view_position(uv: vec2f, depth: f32) -> vec3f {

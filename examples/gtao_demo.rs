@@ -35,7 +35,8 @@ struct CameraUniform {
 }
 
 fn main() {
-    let instance = wgpu::Instance::default();
+    let instance =
+        wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
     let adapter = block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
         .expect("no wgpu adapter available");
     println!("adapter: {:?}", adapter.get_info());
