@@ -377,7 +377,7 @@ fn main() {
     let ao_pixels = read_buffer(&device, &ao_readback);
 
     write_bmp(
-        "gtao_example.bmp",
+        "target/gtao_example.bmp",
         WIDTH,
         HEIGHT,
         &final_pixels,
@@ -385,15 +385,13 @@ fn main() {
     )
     .expect("failed to write gtao_example.bmp");
     write_bmp(
-        "gtao_ao.bmp",
+        "target/gtao_ao.bmp",
         WIDTH,
         HEIGHT,
         &ao_pixels,
         padded_bytes_per_row,
     )
     .expect("failed to write gtao_ao.bmp");
-
-    println!("wrote gtao_example.bmp and gtao_ao.bmp");
 }
 
 fn create_composite_pipeline(
@@ -586,6 +584,8 @@ fn write_bmp(
         }
         out.resize(out.len() + (row_size - width * 3) as usize, 0);
     }
+
+    println!("Writing {}", path);
 
     std::fs::write(path, out)
 }
